@@ -1,38 +1,50 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { toast } from "sonner";
 import { CalendarIcon, MapPin, User, Stethoscope, Clock, CheckCircle2 } from "lucide-react";
 import { format } from "date-fns";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
+import { useNavigate } from "react-router-dom";
+
+interface Hospital {
+  id: string;
+  name: string;
+  location: string;
+}
+
+interface Department {
+  id: string;
+  name: string;
+  hospital_id: string;
+}
+
+interface Doctor {
+  id: string;
+  name: string;
+  specialization: string;
+  department_id: string;
+}
 
 const BookAppointment = () => {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const [date, setDate] = useState<Date>();
   const [hospital, setHospital] = useState("");
   const [department, setDepartment] = useState("");
   const [doctor, setDoctor] = useState("");
   const [timeSlot, setTimeSlot] = useState("");
   const [step, setStep] = useState(1);
-
-  const hospitals = [
-    { id: 1, name: "City General Hospital", location: "Downtown" },
-    { id: 2, name: "St. Mary's Medical Center", location: "Westside" },
-    { id: 3, name: "Regional Health Institute", location: "North District" }
-  ];
-
-  const departments = [
-    "Cardiology", "Orthopedics", "Neurology", "Pediatrics", 
-    "Dermatology", "ENT", "Ophthalmology", "General Medicine"
-  ];
-
-  const doctors = [
-    { name: "Dr. Sarah Johnson", specialization: "Senior Cardiologist" },
-    { name: "Dr. Michael Chen", specialization: "Cardiac Surgeon" },
-    { name: "Dr. Emily Rodriguez", specialization: "Interventional Cardiologist" }
-  ];
+  const [tokenNumber, setTokenNumber] = useState<number>(0);
+  
+  const [hospitals, setHospitals] = useState<Hospital[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [doctors, setDoctors] = useState<Doctor[]>([]);
+  const [loading, setLoading] = useState(false);
 
   const timeSlots = [
     "09:00 AM", "09:30 AM", "10:00 AM", "10:30 AM",
@@ -40,17 +52,124 @@ const BookAppointment = () => {
     "03:00 PM", "03:30 PM", "04:00 PM", "04:30 PM"
   ];
 
-  const handleBooking = () => {
-    if (!hospital || !department || !doctor || !date || !timeSlot) {
+  useEffect(() => {
+    fetchHospitals();
+  }, []);
+
+  useEffect(() => {
+    if (hospital) {
+      fetchDepartments(hospital);
+    }
+  }, [hospital]);
+
+  useEffect(() => {
+    if (department) {
+      fetchDoctors(department);
+    }
+  }, [department]);
+
+  const fetchHospitals = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('hospitals')
+        .select('*')
+        .order('name');
+      
+      if (error) throw error;
+      setHospitals(data || []);
+    } catch (error: any) {
+      toast.error('Failed to load hospitals');
+    }
+  };
+
+  const fetchDepartments = async (hospitalId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('departments')
+        .select('*')
+        .eq('hospital_id', hospitalId)
+        .order('name');
+      
+      if (error) throw error;
+      setDepartments(data || []);
+    } catch (error: any) {
+      toast.error('Failed to load departments');
+    }
+  };
+
+  const fetchDoctors = async (departmentId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('doctors')
+        .select('*')
+        .eq('department_id', departmentId)
+        .eq('status', 'active')
+        .order('name');
+      
+      if (error) throw error;
+      setDoctors(data || []);
+    } catch (error: any) {
+      toast.error('Failed to load doctors');
+    }
+  };
+
+  const generateTokenNumber = async (doctorId: string, appointmentDate: string) => {
+    // Get count of appointments for the same doctor on the same date
+    const { count, error } = await supabase
+      .from('appointments')
+      .select('*', { count: 'exact', head: true })
+      .eq('doctor_id', doctorId)
+      .eq('appointment_date', appointmentDate);
+
+    if (error) {
+      console.error('Error generating token:', error);
+      return Math.floor(Math.random() * 100) + 1;
+    }
+
+    return (count || 0) + 1;
+  };
+
+  const handleBooking = async () => {
+    if (!hospital || !department || !doctor || !date || !timeSlot || !user) {
       toast.error("Please fill all required fields");
       return;
     }
 
-    toast.success("Appointment booked successfully!", {
-      description: `Token #58 assigned for ${format(date, "PPP")} at ${timeSlot}`,
-    });
-    
-    setStep(5);
+    setLoading(true);
+
+    try {
+      const appointmentDate = format(date, "yyyy-MM-dd");
+      const token = await generateTokenNumber(doctor, appointmentDate);
+      
+      const { data, error } = await supabase
+        .from('appointments')
+        .insert({
+          patient_id: user.id,
+          doctor_id: doctor,
+          hospital_id: hospital,
+          department_id: department,
+          appointment_date: appointmentDate,
+          appointment_time: timeSlot,
+          token_number: token,
+          status: 'scheduled',
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setTokenNumber(token);
+      toast.success("Appointment booked successfully!", {
+        description: `Token #${token} assigned for ${format(date, "PPP")} at ${timeSlot}`,
+      });
+      
+      setStep(5);
+    } catch (error: any) {
+      console.error('Booking error:', error);
+      toast.error(error.message || "Failed to book appointment");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const isStepComplete = (stepNum: number) => {
@@ -62,6 +181,10 @@ const BookAppointment = () => {
       default: return false;
     }
   };
+
+  const selectedHospital = hospitals.find(h => h.id === hospital);
+  const selectedDepartment = departments.find(d => d.id === department);
+  const selectedDoctor = doctors.find(d => d.id === doctor);
 
   return (
     <div className="min-h-screen bg-gradient-subtle py-8">
@@ -123,9 +246,9 @@ const BookAppointment = () => {
                   <Card
                     key={h.id}
                     className={`p-4 cursor-pointer transition-all hover:shadow-md ${
-                      hospital === h.name ? 'border-2 border-primary bg-accent' : ''
+                      hospital === h.id ? 'border-2 border-primary bg-accent' : ''
                     }`}
-                    onClick={() => setHospital(h.name)}
+                    onClick={() => setHospital(h.id)}
                   >
                     <div className="flex items-center justify-between">
                       <div>
@@ -135,7 +258,7 @@ const BookAppointment = () => {
                           {h.location}
                         </p>
                       </div>
-                      {hospital === h.name && (
+                      {hospital === h.id && (
                         <CheckCircle2 className="h-6 w-6 text-primary" />
                       )}
                     </div>
@@ -154,15 +277,15 @@ const BookAppointment = () => {
               <div className="grid md:grid-cols-2 gap-4">
                 {departments.map((dept) => (
                   <Card
-                    key={dept}
+                    key={dept.id}
                     className={`p-4 cursor-pointer transition-all hover:shadow-md ${
-                      department === dept ? 'border-2 border-primary bg-accent' : ''
+                      department === dept.id ? 'border-2 border-primary bg-accent' : ''
                     }`}
-                    onClick={() => setDepartment(dept)}
+                    onClick={() => setDepartment(dept.id)}
                   >
                     <div className="flex items-center justify-between">
-                      <span className="font-medium">{dept}</span>
-                      {department === dept && (
+                      <span className="font-medium">{dept.name}</span>
+                      {department === dept.id && (
                         <CheckCircle2 className="h-5 w-5 text-primary" />
                       )}
                     </div>
@@ -181,11 +304,11 @@ const BookAppointment = () => {
               <div className="space-y-4">
                 {doctors.map((doc) => (
                   <Card
-                    key={doc.name}
+                    key={doc.id}
                     className={`p-5 cursor-pointer transition-all hover:shadow-md ${
-                      doctor === doc.name ? 'border-2 border-primary bg-accent' : ''
+                      doctor === doc.id ? 'border-2 border-primary bg-accent' : ''
                     }`}
-                    onClick={() => setDoctor(doc.name)}
+                    onClick={() => setDoctor(doc.id)}
                   >
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-4">
@@ -197,7 +320,7 @@ const BookAppointment = () => {
                           <p className="text-sm text-muted-foreground">{doc.specialization}</p>
                         </div>
                       </div>
-                      {doctor === doc.name && (
+                      {doctor === doc.id && (
                         <CheckCircle2 className="h-6 w-6 text-primary" />
                       )}
                     </div>
@@ -225,7 +348,12 @@ const BookAppointment = () => {
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0">
-                      <Calendar mode="single" selected={date} onSelect={setDate} />
+                      <Calendar 
+                        mode="single" 
+                        selected={date} 
+                        onSelect={setDate}
+                        disabled={(date) => date < new Date()}
+                      />
                     </PopoverContent>
                   </Popover>
                 </div>
@@ -263,15 +391,19 @@ const BookAppointment = () => {
                 <div className="space-y-3">
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Token Number:</span>
-                    <span className="font-bold text-primary text-xl">#58</span>
+                    <span className="font-bold text-primary text-xl">#{tokenNumber}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Hospital:</span>
-                    <span className="font-semibold">{hospital}</span>
+                    <span className="font-semibold">{selectedHospital?.name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Department:</span>
+                    <span className="font-semibold">{selectedDepartment?.name}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Doctor:</span>
-                    <span className="font-semibold">{doctor}</span>
+                    <span className="font-semibold">{selectedDoctor?.name}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-muted-foreground">Date & Time:</span>
@@ -282,7 +414,7 @@ const BookAppointment = () => {
                 </div>
               </Card>
 
-              <Button className="w-full" onClick={() => window.location.href = "/"}>
+              <Button className="w-full" onClick={() => navigate("/")}>
                 Go to Dashboard
               </Button>
             </div>
@@ -302,9 +434,9 @@ const BookAppointment = () => {
               <Button
                 className="flex-1"
                 onClick={() => step === 4 ? handleBooking() : setStep(step + 1)}
-                disabled={!isStepComplete(step)}
+                disabled={!isStepComplete(step) || loading}
               >
-                {step === 4 ? "Confirm Booking" : "Next"}
+                {step === 4 ? (loading ? "Booking..." : "Confirm Booking") : "Next"}
               </Button>
             </div>
           )}

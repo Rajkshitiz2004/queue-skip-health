@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,30 +6,93 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { toast } from "sonner";
 import { Activity, Mail, Lock, User, Phone } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
+import { useNavigate } from "react-router-dom";
 
 const Login = () => {
   const [isLoading, setIsLoading] = useState(false);
+  const navigate = useNavigate();
 
-  const handleLogin = (e: React.FormEvent) => {
+  useEffect(() => {
+    // Check if user is already logged in
+    const checkUser = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        navigate("/");
+      }
+    };
+    checkUser();
+  }, [navigate]);
+
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     
-    setTimeout(() => {
+    const formData = new FormData(e.currentTarget);
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
+
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+
+      if (data.session) {
+        toast.success("Welcome back!");
+        navigate("/");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to sign in");
+    } finally {
       setIsLoading(false);
-      toast.success("Welcome back!");
-      window.location.href = "/";
-    }, 1500);
+    }
   };
 
-  const handleSignup = (e: React.FormEvent) => {
+  const handleSignup = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     
-    setTimeout(() => {
+    const formData = new FormData(e.currentTarget);
+    const email = formData.get("signup-email") as string;
+    const password = formData.get("signup-password") as string;
+    const fullName = formData.get("name") as string;
+    const phone = formData.get("phone") as string;
+
+    try {
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: fullName,
+            phone: phone,
+          },
+          emailRedirectTo: `${window.location.origin}/`,
+        },
+      });
+
+      if (error) {
+        toast.error(error.message);
+        return;
+      }
+
+      if (data.session) {
+        toast.success("Account created successfully!");
+        navigate("/");
+      } else {
+        toast.success("Please check your email to verify your account");
+      }
+    } catch (error: any) {
+      toast.error(error.message || "Failed to create account");
+    } finally {
       setIsLoading(false);
-      toast.success("Account created successfully!");
-      window.location.href = "/";
-    }, 1500);
+    }
   };
 
   return (
@@ -106,12 +169,13 @@ const Login = () => {
 
                 <div className="space-y-4">
                   <div>
-                    <Label htmlFor="email">Email or Phone</Label>
+                    <Label htmlFor="email">Email</Label>
                     <div className="relative mt-2">
                       <Mail className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                       <Input
                         id="email"
-                        type="text"
+                        name="email"
+                        type="email"
                         placeholder="your@email.com"
                         className="pl-10 h-12"
                         required
@@ -125,6 +189,7 @@ const Login = () => {
                       <Lock className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                       <Input
                         id="password"
+                        name="password"
                         type="password"
                         placeholder="••••••••"
                         className="pl-10 h-12"
@@ -160,6 +225,7 @@ const Login = () => {
                       <User className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                       <Input
                         id="name"
+                        name="name"
                         type="text"
                         placeholder="John Doe"
                         className="pl-10 h-12"
@@ -174,6 +240,7 @@ const Login = () => {
                       <Mail className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                       <Input
                         id="signup-email"
+                        name="signup-email"
                         type="email"
                         placeholder="your@email.com"
                         className="pl-10 h-12"
@@ -188,6 +255,7 @@ const Login = () => {
                       <Phone className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                       <Input
                         id="phone"
+                        name="phone"
                         type="tel"
                         placeholder="+1 (555) 000-0000"
                         className="pl-10 h-12"
@@ -202,10 +270,12 @@ const Login = () => {
                       <Lock className="absolute left-3 top-3 h-5 w-5 text-muted-foreground" />
                       <Input
                         id="signup-password"
+                        name="signup-password"
                         type="password"
                         placeholder="••••••••"
                         className="pl-10 h-12"
                         required
+                        minLength={6}
                       />
                     </div>
                   </div>
