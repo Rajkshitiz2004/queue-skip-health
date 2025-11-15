@@ -18,7 +18,7 @@ const Login = () => {
     const checkUser = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
-        navigate("/");
+        navigate("/dashboard");
       }
     };
     checkUser();
@@ -45,7 +45,7 @@ const Login = () => {
 
       if (data.session) {
         toast.success("Welcome back!");
-        navigate("/");
+        navigate("/dashboard");
       }
     } catch (error: any) {
       toast.error(error.message || "Failed to sign in");
@@ -84,7 +84,7 @@ const Login = () => {
 
       if (data.session) {
         toast.success("Account created successfully!");
-        navigate("/");
+        navigate("/dashboard");
       } else {
         toast.success("Please check your email to verify your account");
       }
